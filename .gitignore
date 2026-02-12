@@ -1,0 +1,27 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+
+# ---- Virtual environments ----
+.venv/
+venv/
+
+# ---- Secrets / OAuth ----
+.secrets/
+credentials.json
+*.env
+
+# ---- Generated outputs (this project) ----
+cache/
+threads/
+reports/
+
+# ---- OS / Editor ----
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
