@@ -15,20 +15,34 @@ class DriveFile:
     id: str
     name: str
     mime_type: str = "application/pdf"
-    modified_time: str | None = None  # ISO string if available
+    modified_time: str | None = None  # RFC3339/ISO string if available
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "mime_type": self.mime_type,
+            "modified_time": self.modified_time,
+        }
 
 
 @dataclass
 class Issue:
     """
     category: "CRITICAL ERROR" | "INTERMEDIATE ERROR" | "MINOR ERROR" | "SYSTEM"
-    message: short summary
-    detail: longer details (optional)
     """
     category: str
     message: str
     detail: str | None = None
-    location: str | None = None  # optional (e.g., "Eq (12)", "Page 4, line 3")
+    location: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "category": self.category,
+            "message": self.message,
+            "detail": self.detail,
+            "location": self.location,
+        }
 
 
 @dataclass
@@ -43,6 +57,14 @@ class PaperThread:
         return len(self.issues) > 0
 
     def has_errors(self) -> bool:
-        # Treat SYSTEM/CRITICAL/INTERMEDIATE as “errors” that prevent auto-delete
         error_cats = {"SYSTEM", "CRITICAL ERROR", "INTERMEDIATE ERROR"}
         return any(i.category in error_cats for i in self.issues)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "thread_id": self.thread_id,
+            "drive_file": self.drive_file.to_dict(),
+            "local_path": self.local_path,
+            "issues": [i.to_dict() for i in self.issues],
+            "llm_raw": self.llm_raw,
+        }
