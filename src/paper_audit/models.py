@@ -1,32 +1,17 @@
 from __future__ import annotations
-from pydantic import BaseModel, Field
-from typing import List, Optional, Dict
-from datetime import datetime
 
-class DriveFile(BaseModel):
-    id: str
-    name: str
-    mimeType: str
-    modifiedTime: Optional[str] = None
-    size: Optional[str] = None
+import json
+from pathlib import Path
+from typing import Any
 
-class Issue(BaseModel):
-    code: str
-    message: str
-    severity: str = Field(default="error")      # error | warning
-    category: str = Field(default="INTERMEDIATE")  # CRITICAL | INTERMEDIATE | MINOR
-    meta: Dict[str, str] = Field(default_factory=dict)
+from .models import PaperThread
 
-class PaperThread(BaseModel):
-    thread_id: str
-    drive_file: DriveFile
-    local_path: str
-    created_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
-    issues: List[Issue] = Field(default_factory=list)
-    llm_raw: Optional[str] = None
 
-    def has_errors(self) -> bool:
-        return any(i.severity == "error" for i in self.issues)
+def save_thread(thread_path: Path, thread: PaperThread) -> None:
+    thread_path.parent.mkdir(parents=True, exist_ok=True)
+    thread_path.write_text(json.dumps(thread.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def has_any_issue(self) -> bool:
-        return len(self.issues) > 0
+
+def save_summary(summary_path: Path, summary: dict[str, Any]) -> None:
+    summary_path.parent.mkdir(parents=True, exist_ok=True)
+    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

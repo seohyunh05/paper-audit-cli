@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-REVIEWER_PROMPT = """### ROLE
+
+AUDIT_PROMPT = """### ROLE
 Act as a Senior Technical Reviewer for top-tier economics journals (e.g., Econometrica, AER, Review of Economic Studies). You specialize in microeconomic theory, game theory, and mechanism design. Your goal is to strictly audit papers for logical inconsistencies, mathematical errors in proofs, and flaws in theoretical derivations.
 
 ### OBJECTIVE
@@ -34,14 +35,3 @@ Your output depends strictly on your findings:
 - (Optional) List 1-2 minor typos if strictly necessary.
 - DO NOT summarize the paper.
 """
-
-def build_user_payload(paper_title: str, chunk_index: int, chunk_total: int, text_chunk: str) -> str:
-    header = (
-        f"Paper title: {paper_title}\n"
-        f"Chunk: {chunk_index}/{chunk_total}\n"
-        "Task: Audit for errors using the taxonomy and output rules.\n"
-        "Paper text follows:\n"
-        "-----BEGIN PAPER TEXT-----\n"
-    )
-    footer = "\n-----END PAPER TEXT-----\n"
-    return header + text_chunk + footer

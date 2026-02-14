@@ -1,96 +1,142 @@
 from __future__ import annotations
-from pathlib import Path
-from typing import List, Optional
 
-from googleapiclient.discovery import build
-from googleapiclient.http import MediaIoBaseDownload
+import os
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Iterable
+
+from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
-from google.auth.transport.requests import Request
+from googleapiclient.discovery import build
+from googleapiclient.http import MediaIoBaseDownload
 
-from .config import Paths
 from .models import DriveFile
+
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
-def ensure_dirs(paths: Paths) -> None:
-    paths.secrets_dir.mkdir(parents=True, exist_ok=True)
 
-def load_credentials(paths: Paths) -> Optional[Credentials]:
-    if paths.token_path.exists():
-        return Credentials.from_authorized_user_file(str(paths.token_path), SCOPES)
-    return None
+@dataclass(frozen=True)
+class DrivePaths:
+    credentials_path: Path
+    token_path: Path
 
-def save_credentials(paths: Paths, creds: Credentials) -> None:
-    ensure_dirs(paths)
-    paths.token_path.write_text(creds.to_json(), encoding="utf-8")
 
-def auth_interactive(paths: Paths) -> Credentials:
-    if not paths.credentials_path.exists():
-        raise FileNotFoundError(f"Missing {paths.credentials_path}. Put your Google OAuth client JSON there.")
+class DriveClient:
+    def __init__(self, service):
+        self._service = service
 
-    creds = load_credentials(paths)
-    if creds and creds.valid:
+    @staticmethod
+    def auth_interactive(paths: DrivePaths) -> Credentials:
+        if not paths.credentials_path.exists():
+            raise FileNotFoundError(f"Missing {paths.credentials_path}. Put your Google OAuth client JSON there.")
+
+        creds: Credentials | None = None
+        if paths.token_path.exists():
+            creds = Credentials.from_authorized_user_file(str(paths.token_path), SCOPES)
+
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                flow = InstalledAppFlow.from_client_secrets_file(str(paths.credentials_path), SCOPES)
+                creds = flow.run_local_server(port=0)
+
+            paths.token_path.parent.mkdir(parents=True, exist_ok=True)
+            paths.token_path.write_text(creds.to_json(), encoding="utf-8")
+
         return creds
 
-    if creds and creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        save_credentials(paths, creds)
-        return creds
+    @staticmethod
+    def from_credentials(creds: Credentials):
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        return DriveClient(service)
 
-    flow = InstalledAppFlow.from_client_secrets_file(str(paths.credentials_path), SCOPES)
-    creds = flow.run_local_server(port=0)
-    save_credentials(paths, creds)
-    return creds
+    def list_pdfs_in_folder(self, folder_id: str, recursive: bool) -> list[DriveFile]:
+        # If recursive, we BFS into subfolders.
+        if not recursive:
+            return self._list_pdfs_non_recursive(folder_id)
 
-def get_drive_service(paths: Paths):
-    creds = load_credentials(paths)
-    if not creds:
-        raise RuntimeError("Not authenticated. Run: paper-audit auth")
-    if creds.expired and creds.refresh_token:
-        creds.refresh(Request())
-        save_credentials(paths, creds)
-    return build("drive", "v3", credentials=creds)
+        pdfs: list[DriveFile] = []
+        queue: list[str] = [folder_id]
 
-def list_pdfs_in_folder(paths: Paths, folder_id: str, recursive: bool = True) -> List[DriveFile]:
-    service = get_drive_service(paths)
+        while queue:
+            fid = queue.pop(0)
+            pdfs.extend(self._list_pdfs_non_recursive(fid))
+            queue.extend(self._list_subfolders(fid))
 
-    files: List[DriveFile] = []
-    to_visit = [folder_id]
+        return pdfs
 
-    while to_visit:
-        current = to_visit.pop()
-        q = f"'{current}' in parents and trashed=false"
-        page_token = None
+    def _list_pdfs_non_recursive(self, folder_id: str) -> list[DriveFile]:
+        q = f"'{folder_id}' in parents and trashed=false and mimeType='application/pdf'"
+        fields = "nextPageToken, files(id, name, modifiedTime, size)"
+        out: list[DriveFile] = []
+        token = None
 
         while True:
-            resp = service.files().list(
-                q=q,
-                fields="nextPageToken, files(id,name,mimeType,modifiedTime,size)",
-                pageToken=page_token,
-                pageSize=1000
-            ).execute()
-
+            resp = (
+                self._service.files()
+                .list(q=q, fields=fields, pageSize=1000, pageToken=token, supportsAllDrives=True, includeItemsFromAllDrives=True)
+                .execute()
+            )
             for f in resp.get("files", []):
-                df = DriveFile(**f)
-                if df.mimeType == "application/pdf":
-                    files.append(df)
-                elif recursive and df.mimeType == "application/vnd.google-apps.folder":
-                    to_visit.append(df.id)
-
-            page_token = resp.get("nextPageToken")
-            if not page_token:
+                out.append(
+                    DriveFile(
+                        id=f["id"],
+                        name=f.get("name", f["id"]),
+                        modified_time=f.get("modifiedTime"),
+                        size=int(f["size"]) if f.get("size") else None,
+                    )
+                )
+            token = resp.get("nextPageToken")
+            if not token:
                 break
+        return out
 
-    return files
+    def _list_subfolders(self, folder_id: str) -> list[str]:
+        q = f"'{folder_id}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'"
+        fields = "nextPageToken, files(id)"
+        out: list[str] = []
+        token = None
 
-def download_file(paths: Paths, file_id: str, out_path: Path) -> None:
-    service = get_drive_service(paths)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+        while True:
+            resp = (
+                self._service.files()
+                .list(q=q, fields=fields, pageSize=1000, pageToken=token, supportsAllDrives=True, includeItemsFromAllDrives=True)
+                .execute()
+            )
+            for f in resp.get("files", []):
+                out.append(f["id"])
+            token = resp.get("nextPageToken")
+            if not token:
+                break
+        return out
 
-    request = service.files().get_media(fileId=file_id)
-    with open(out_path, "wb") as f:
-        downloader = MediaIoBaseDownload(f, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
+    def download_pdf(self, file_id: str, target_path: Path) -> None:
+        target_path.parent.mkdir(parents=True, exist_ok=True)
+        request = self._service.files().get_media(fileId=file_id, supportsAllDrives=True)
+        with target_path.open("wb") as fh:
+            downloader = MediaIoBaseDownload(fh, request, chunksize=1024 * 1024)  # 1MB
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+
+    @staticmethod
+    def drive_time_to_epoch(modified_time: str | None) -> float | None:
+        if not modified_time:
+            return None
+        # RFC3339 e.g. "2026-02-13T12:05:15.123Z"
+        dt = datetime.fromisoformat(modified_time.replace("Z", "+00:00"))
+        return dt.timestamp()
+
+    @staticmethod
+    def local_is_fresh(local_path: Path, modified_time: str | None) -> bool:
+        if not local_path.exists():
+            return False
+        drive_epoch = DriveClient.drive_time_to_epoch(modified_time)
+        if drive_epoch is None:
+            return True
+        local_epoch = local_path.stat().st_mtime
+        return local_epoch >= drive_epoch - 2  # small tolerance

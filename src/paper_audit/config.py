@@ -1,33 +1,52 @@
+from __future__ import annotations
+
 from dataclasses import dataclass
-from pathlib import Path
 
-@dataclass(frozen=True)
-class Paths:
-    root: Path = Path(".")
-    secrets_dir: Path = Path(".secrets")
-    token_path: Path = Path(".secrets/token.json")
-    credentials_path: Path = Path("credentials.json")
-
-    cache_dir: Path = Path("cache")
-    threads_dir: Path = Path("threads")
-    reports_dir: Path = Path("reports")
 
 @dataclass(frozen=True)
 class AuditPolicy:
-    recursive: bool = True
+    # Drive traversal
+    recursive: bool = False
 
-    # Basic PDF sanity checks
+    # Basic PDF checks
     min_pages: int = 2
-    min_text_chars: int = 300
+    min_text_chars: int = 800
 
-    # LLM prompt checks
+    # Performance
+    workers: int = 6              # parallelism for download + basic checks
+    llm_workers: int = 1          # keep small; LLM is slow + can rate limit
+    max_files: int | None = None  # for testing: limit number of PDFs per folder
+
+    # LLM
     enable_llm: bool = True
-    llm_model: str = "gpt-5"
-    llm_reasoning_effort: str = "low"  # low | medium | high (if supported)
-    llm_max_chars: int = 120_000
-    llm_chunk_chars: int = 18_000
-    llm_chunk_overlap: int = 800
+    llm_model: str = "gpt-4.1-mini"
+    llm_reasoning_effort: str = "low"
 
-    # Storage behavior
-    delete_thread_if_no_errors: bool = True
-    delete_cached_pdf_if_no_errors: bool = False
+    # Limit text sent to LLM (speed + cost)
+    llm_max_chars: int = 12000
+    llm_chunk_chars: int = 4000
+    llm_chunk_overlap: int = 300
+
+    # Quick mode (faster/cheaper LLM): fewer chars + fewer chunks
+    quick_mode: bool = False
+
+
+def apply_quick_mode(policy: AuditPolicy) -> AuditPolicy:
+    if not policy.quick_mode:
+        return policy
+    # Override for fast testing
+    return AuditPolicy(
+        recursive=policy.recursive,
+        min_pages=policy.min_pages,
+        min_text_chars=policy.min_text_chars,
+        workers=policy.workers,
+        llm_workers=policy.llm_workers,
+        max_files=policy.max_files,
+        enable_llm=policy.enable_llm,
+        llm_model=policy.llm_model,
+        llm_reasoning_effort=policy.llm_reasoning_effort,
+        llm_max_chars=6000,
+        llm_chunk_chars=3000,
+        llm_chunk_overlap=200,
+        quick_mode=True,
+    )
