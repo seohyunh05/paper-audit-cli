@@ -1,17 +1,48 @@
+# src/paper_audit/models.py
 from __future__ import annotations
 
-import json
-from pathlib import Path
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any
 
-from .models import PaperThread
+
+def utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
-def save_thread(thread_path: Path, thread: PaperThread) -> None:
-    thread_path.parent.mkdir(parents=True, exist_ok=True)
-    thread_path.write_text(json.dumps(thread.to_dict(), ensure_ascii=False, indent=2), encoding="utf-8")
+@dataclass(frozen=True)
+class DriveFile:
+    id: str
+    name: str
+    mime_type: str = "application/pdf"
+    modified_time: str | None = None  # ISO string if available
 
 
-def save_summary(summary_path: Path, summary: dict[str, Any]) -> None:
-    summary_path.parent.mkdir(parents=True, exist_ok=True)
-    summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+@dataclass
+class Issue:
+    """
+    category: "CRITICAL ERROR" | "INTERMEDIATE ERROR" | "MINOR ERROR" | "SYSTEM"
+    message: short summary
+    detail: longer details (optional)
+    """
+    category: str
+    message: str
+    detail: str | None = None
+    location: str | None = None  # optional (e.g., "Eq (12)", "Page 4, line 3")
+
+
+@dataclass
+class PaperThread:
+    thread_id: str
+    drive_file: DriveFile
+    local_path: str
+    issues: list[Issue]
+    llm_raw: Any = None
+
+    def has_any_issue(self) -> bool:
+        return len(self.issues) > 0
+
+    def has_errors(self) -> bool:
+        # Treat SYSTEM/CRITICAL/INTERMEDIATE as “errors” that prevent auto-delete
+        error_cats = {"SYSTEM", "CRITICAL ERROR", "INTERMEDIATE ERROR"}
+        return any(i.category in error_cats for i in self.issues)
