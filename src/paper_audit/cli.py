@@ -1,73 +1,77 @@
 from __future__ import annotations
+
+from pathlib import Path
 import typer
 from rich import print
-from rich.table import Table
 
 from .config import Paths, AuditPolicy
-
-from .drive_client import auth_interactive
+from .drive_client import DriveClient
 from .runner import audit_folder
 
-app = typer.Typer(add_completion=False)
-paths = Paths()
+app = typer.Typer(add_completion=False, help="Paper audit CLI (Google Drive → checks → optional LLM).")
 
-DEFAULT_FOLDER_ID = "1fTHQEJvEr2_9UX0c3f_72SUcMiSYcm2p"
 
 @app.command()
 def auth():
     """
     Authenticate Google Drive access (OAuth). Stores token in ./.secrets/token.json
     """
-    auth_interactive(paths)
+    root = Path.cwd()
+    paths = Paths(root=root)
+    drive = DriveClient(paths=paths)
+    drive.auth_interactive()
     print("[green]Authenticated successfully.[/green]")
     print(f"Token saved to: {paths.token_path}")
 
+
 @app.command()
 def scan(
-    folder_id: str = typer.Option(DEFAULT_FOLDER_ID, "--folder-id", help="Google Drive folder ID (default: professor's folder)"),
-    recursive: bool = typer.Option(True, help="Scan folders recursively"),
-    min_pages: int = typer.Option(2, help="Warn if PDF has fewer pages than this"),
-    min_text_chars: int = typer.Option(300, help="Warn if extracted text chars less than this"),
-
-    enable_llm: bool = typer.Option(True, help="Enable LLM-based logical audit (requires OPENAI_API_KEY env var)"),
-    llm_model: str = typer.Option("gpt-5", help="OpenAI model name"),
-    llm_reasoning_effort: str = typer.Option("low", help="Reasoning effort (if supported): low|medium|high"),
-    llm_max_chars: int = typer.Option(120000, help="Cap extracted text characters sent to LLM"),
-    llm_chunk_chars: int = typer.Option(18000, help="Chunk size for long papers"),
-    llm_chunk_overlap: int = typer.Option(800, help="Chunk overlap"),
-
-    keep_all_threads: bool = typer.Option(False, help="If set, do NOT auto-delete threads when no issues"),
-    delete_cached_pdf_if_no_errors: bool = typer.Option(False, help="Also delete cached PDFs when no issues"),
+    folder_id: str = typer.Option(..., "--folder-id", help="Google Drive folder ID"),
+    recursive: bool = typer.Option(False, "--recursive", help="Scan subfolders recursively"),
+    enable_llm: bool = typer.Option(True, "--enable-llm/--no-enable-llm", help="Enable LLM audit step"),
+    max_files: int | None = typer.Option(None, "--max-files", help="Limit number of PDFs (testing)"),
+    workers: int = typer.Option(6, "--workers", help="Download/basic-check workers"),
+    llm_workers: int = typer.Option(2, "--llm-workers", help="LLM workers (keep small)"),
+    min_pages: int = typer.Option(2, "--min-pages", help="Minimum pages required"),
+    min_text_chars: int = typer.Option(500, "--min-text-chars", help="Minimum extracted text chars required"),
+    llm_model: str = typer.Option("gpt-4.1-mini", "--llm-model", help="OpenAI model"),
+    llm_reasoning_effort: str = typer.Option("low", "--llm-reasoning-effort", help="Reasoning effort"),
+    llm_max_chars: int = typer.Option(120000, "--llm-max-chars", help="Max chars sent to LLM"),
 ):
+    """
+    Scan one Drive folder: downloads PDFs (cached), runs checks, optionally runs LLM audit.
+    Writes reports/ and threads/ output.
+    """
+    root = Path.cwd()
+    paths = Paths(root=root)
+
     policy = AuditPolicy(
         recursive=recursive,
         min_pages=min_pages,
         min_text_chars=min_text_chars,
-
+        workers=workers,
+        llm_workers=llm_workers,
         enable_llm=enable_llm,
         llm_model=llm_model,
         llm_reasoning_effort=llm_reasoning_effort,
         llm_max_chars=llm_max_chars,
-        llm_chunk_chars=llm_chunk_chars,
-        llm_chunk_overlap=llm_chunk_overlap,
-
-        delete_thread_if_no_errors=(not keep_all_threads),
-        delete_cached_pdf_if_no_errors=delete_cached_pdf_if_no_errors,
+        max_files=max_files,
     )
 
-    summary = audit_folder(paths, folder_id, policy)
+    drive = DriveClient(paths=paths)
 
-    table = Table(title="Paper Audit Summary")
-    table.add_column("Metric", style="bold")
-    table.add_column("Value")
+    summary = audit_folder(paths=paths, drive=drive, folder_id=folder_id, policy=policy)
 
-    for k in ["total_pdfs", "papers_with_issues", "papers_no_issues", "kept_threads", "deleted_threads"]:
-        table.add_row(k, str(summary[k]))
+    print("\n[bold]Paper Audit Summary[/bold]")
+    print(f"total_pdfs: {summary['total_pdfs']}")
+    print(f"papers_with_issues: {summary['papers_with_issues']}")
+    print(f"papers_no_issues: {summary['papers_no_issues']}")
+    print(f"kept_threads: {summary['kept_threads']}")
+    print(f"deleted_threads: {summary['deleted_threads']}")
+    print(f"\nReport saved: {summary['dirs']['report_path']}")
+    print(f"Threads dir: {summary['dirs']['threads_dir']}")
+    print(f"Cache dir: {summary['dirs']['cache_dir']}")
 
-    print(table)
-    print(f"[cyan]Report saved:[/cyan] {paths.reports_dir / 'summary.json'}")
-    print(f"[cyan]Threads dir:[/cyan] {paths.threads_dir}")
-    print(f"[cyan]Cache dir:[/cyan] {paths.cache_dir}")
 
 if __name__ == "__main__":
     app()
