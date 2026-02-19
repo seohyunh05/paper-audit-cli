@@ -1,48 +1,27 @@
-# src/paper_audit/models.py
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timezone
-from typing import Any
+from dataclasses import dataclass, asdict
+from typing import Any, Dict, List, Optional
 
 
-def utc_now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-@dataclass(frozen=True)
+@dataclass
 class DriveFile:
     id: str
     name: str
-    mime_type: str = "application/pdf"
-    modified_time: str | None = None  # RFC3339/ISO string if available
-
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "mime_type": self.mime_type,
-            "modified_time": self.modified_time,
-        }
+    mime_type: str
+    modified_time: Optional[str] = None  # from Drive API
+    size: Optional[int] = None           # bytes (Drive returns as string; we can cast)
 
 
 @dataclass
 class Issue:
-    """
-    category: "CRITICAL ERROR" | "INTERMEDIATE ERROR" | "MINOR ERROR" | "SYSTEM"
-    """
-    category: str
-    message: str
-    detail: str | None = None
-    location: str | None = None
+    level: str            # "CRITICAL" | "INTERMEDIATE" | "MINOR"
+    code: str             # short machine-readable code
+    message: str          # human message
+    details: Optional[Dict[str, Any]] = None
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "category": self.category,
-            "message": self.message,
-            "detail": self.detail,
-            "location": self.location,
-        }
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass
@@ -50,20 +29,19 @@ class PaperThread:
     thread_id: str
     drive_file: DriveFile
     local_path: str
-    issues: list[Issue]
-    llm_raw: Any = None
+    issues: List[Issue]
+    llm_raw: Optional[Dict[str, Any]] = None
+
+    def has_errors(self) -> bool:
+        return any(i.level.upper() == "CRITICAL" for i in self.issues)
 
     def has_any_issue(self) -> bool:
         return len(self.issues) > 0
 
-    def has_errors(self) -> bool:
-        error_cats = {"SYSTEM", "CRITICAL ERROR", "INTERMEDIATE ERROR"}
-        return any(i.category in error_cats for i in self.issues)
-
-    def to_dict(self) -> dict[str, Any]:
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "thread_id": self.thread_id,
-            "drive_file": self.drive_file.to_dict(),
+            "drive_file": asdict(self.drive_file),
             "local_path": self.local_path,
             "issues": [i.to_dict() for i in self.issues],
             "llm_raw": self.llm_raw,

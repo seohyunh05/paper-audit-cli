@@ -1,56 +1,35 @@
 from __future__ import annotations
-import re
-from typing import List, Tuple
+
 from .models import Issue
 
-NO_SIG_RE = re.compile(r"No significant errors found regarding the main results\.", re.IGNORECASE)
-CRIT_RE = re.compile(r"\bCRITICAL ERROR\b", re.IGNORECASE)
-INT_RE  = re.compile(r"\bINTERMEDIATE ERROR\b", re.IGNORECASE)
-MIN_RE  = re.compile(r"\bMINOR ERROR\b", re.IGNORECASE)
+SEVERITIES = ("CRITICAL", "INTERMEDIATE", "MINOR")
 
-def _split_sections(text: str) -> List[Tuple[str, str]]:
-    markers = [("CRITICAL", CRIT_RE), ("INTERMEDIATE", INT_RE), ("MINOR", MIN_RE)]
-    hits = []
-    for cat, rx in markers:
-        for m in rx.finditer(text):
-            hits.append((m.start(), cat))
-    hits.sort(key=lambda x: x[0])
 
-    if not hits:
+def parse_llm_findings(raw: str) -> list[Issue]:
+    """
+    Lightweight parser:
+    - If the model says no significant errors, treat as no issues.
+    - Otherwise, create one Issue per severity section we can detect.
+    """
+    text = (raw or "").strip()
+    if not text:
         return []
 
-    sections = []
-    for i, (pos, cat) in enumerate(hits):
-        end = hits[i + 1][0] if i + 1 < len(hits) else len(text)
-        sec = text[pos:end].strip()
-        sections.append((cat, sec))
-    return sections
-
-def issues_from_llm_output(output: str) -> List[Issue]:
-    if not output:
-        return []
-    if NO_SIG_RE.search(output):
+    lowered = text.lower()
+    if "no significant errors found regarding the main results" in lowered:
         return []
 
-    sections = _split_sections(output)
-    if not sections:
-        # If it didn't label, keep as an intermediate warning (so thread isn't auto-deleted silently).
-        return [Issue(
-            code="LLM_UNLABELED_FINDING",
-            message=output.strip()[:4000],
-            severity="warning",
-            category="INTERMEDIATE",
-            meta={"note": "No explicit taxonomy headers found in output."}
-        )]
+    issues: list[Issue] = []
 
-    issues: List[Issue] = []
-    for cat, sec in sections:
-        sev = "error" if cat in ("CRITICAL", "INTERMEDIATE") else "warning"
-        issues.append(Issue(
-            code=f"LLM_{cat}_FINDING",
-            message=sec[:4000],
-            severity=sev,
-            category=cat,
-            meta={}
-        ))
+    # If model clearly indicates critical/intermediate/minor
+    for sev in SEVERITIES:
+        if sev.lower() in lowered:
+            issues.append(Issue(severity=sev, kind="llm", message=text))
+
+            # If critical or intermediate exists, that's enough; return early to avoid duplicates
+            if sev in ("CRITICAL", "INTERMEDIATE"):
+                return issues
+
+    # fallback: unknown but non-empty response => record as MINOR (review needed)
+    issues.append(Issue(severity="MINOR", kind="llm", message=text))
     return issues

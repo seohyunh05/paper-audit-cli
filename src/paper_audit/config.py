@@ -2,86 +2,64 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Optional
 
 
 @dataclass(frozen=True)
 class Paths:
     """
-    Project layout (relative to repo root):
-      cache/<folder_id>/<file_id>.pdf
-      threads/<folder_id>/<file_id>.json   (only papers with issues)
-      reports/<folder_id>/summary.json
-      reports/summary_all.json
-      .secrets/token.json
-      credentials.json   (repo root; NOT committed)
+    Project paths rooted at the repo folder (current working directory).
     """
     root: Path
+    secrets_dir: Path
+    token_path: Path
+    credentials_path: Path
+    cache_dir: Path
+    threads_dir: Path
+    reports_dir: Path
 
-    @property
-    def cache_dir(self) -> Path:
-        return self.root / "cache"
+    @staticmethod
+    def from_cwd() -> "Paths":
+        root = Path.cwd()
+        secrets_dir = root / ".secrets"
+        token_path = secrets_dir / "token.json"
+        credentials_path = root / "credentials.json"
+        cache_dir = root / "cache"
+        threads_dir = root / "threads"
+        reports_dir = root / "reports"
 
-    @property
-    def threads_dir(self) -> Path:
-        return self.root / "threads"
-
-    @property
-    def reports_dir(self) -> Path:
-        return self.root / "reports"
-
-    @property
-    def secrets_dir(self) -> Path:
-        return self.root / ".secrets"
-
-    @property
-    def credentials_path(self) -> Path:
-        return self.root / "credentials.json"
-
-    @property
-    def token_path(self) -> Path:
-        return self.secrets_dir / "token.json"
-
-    def cache_pdf_path(self, folder_id: str, file_id: str) -> Path:
-        return self.cache_dir / folder_id / f"{file_id}.pdf"
-
-    def thread_path(self, folder_id: str, file_id: str) -> Path:
-        return self.threads_dir / folder_id / f"{file_id}.json"
-
-    def folder_report_path(self, folder_id: str) -> Path:
-        return self.reports_dir / folder_id / "summary.json"
-
-    def all_report_path(self) -> Path:
-        return self.reports_dir / "summary_all.json"
+        return Paths(
+            root=root,
+            secrets_dir=secrets_dir,
+            token_path=token_path,
+            credentials_path=credentials_path,
+            cache_dir=cache_dir,
+            threads_dir=threads_dir,
+            reports_dir=reports_dir,
+        )
 
 
 @dataclass
 class AuditPolicy:
-    # Drive traversal
     recursive: bool = False
+    enable_llm: bool = True
 
-    # Basic checks
-    min_pages: int = 2
-    min_text_chars: int = 500
+    # limits
+    max_files: Optional[int] = None
 
-    # Concurrency
+    # concurrency
     workers: int = 6
-    llm_workers: int = 2  # keep small to reduce rate limiting/cost spikes
+    download_workers: int = 4
+    llm_workers: int = 1
+
+    # basic checks
+    min_pages: int = 1
+    min_text_chars: int = 200
 
     # LLM
-    enable_llm: bool = True
     llm_model: str = "gpt-4.1-mini"
-    llm_reasoning_effort: str = "low"  # low/medium/high depending on your client impl
 
-    # LLM text chunk limits
+    # optional cost/speed controls for llm check (checks.py uses defaults if not present)
     llm_max_chars: int = 120_000
-
-    # Safety/testing
-    max_files: int | None = None  # e.g., 5 to test
-
-
-def apply_quick_mode(policy: AuditPolicy) -> AuditPolicy:
-    """
-    Optional helper if you later want a "fast scan" mode.
-    For now, just returns policy unchanged.
-    """
-    return policy
+    llm_chunk_chars: int = 20_000
+    llm_chunk_overlap: int = 1_000
