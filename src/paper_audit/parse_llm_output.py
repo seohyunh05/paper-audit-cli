@@ -1,16 +1,12 @@
 from __future__ import annotations
 
+import re
+from typing import List
+
 from .models import Issue
 
-SEVERITIES = ("CRITICAL", "INTERMEDIATE", "MINOR")
 
-
-def parse_llm_findings(raw: str) -> list[Issue]:
-    """
-    Lightweight parser:
-    - If the model says no significant errors, treat as no issues.
-    - Otherwise, create one Issue per severity section we can detect.
-    """
+def parse_llm_findings(raw: str) -> List[Issue]:
     text = (raw or "").strip()
     if not text:
         return []
@@ -19,17 +15,23 @@ def parse_llm_findings(raw: str) -> list[Issue]:
     if "no significant errors found regarding the main results" in lowered:
         return []
 
-    issues: list[Issue] = []
+    issues: List[Issue] = []
 
-    # If model clearly indicates critical/intermediate/minor
-    for sev in SEVERITIES:
-        if sev.lower() in lowered:
-            issues.append(Issue(severity=sev, kind="llm", message=text))
+    # Heuristic split by severity mentions
+    pattern = re.compile(r"\b(critical|intermediate|minor)\b", re.IGNORECASE)
+    hits = list(pattern.finditer(text))
 
-            # If critical or intermediate exists, that's enough; return early to avoid duplicates
-            if sev in ("CRITICAL", "INTERMEDIATE"):
-                return issues
+    if not hits:
+        return [Issue(level="INTERMEDIATE", code="LLM_FLAG", message=text[:2000])]
 
-    # fallback: unknown but non-empty response => record as MINOR (review needed)
-    issues.append(Issue(severity="MINOR", kind="llm", message=text))
+    for idx, m in enumerate(hits[:6]):  # cap
+        sev = m.group(1).upper()
+        sev = "CRITICAL" if sev.startswith("CRIT") else "INTERMEDIATE" if sev.startswith("INTER") else "MINOR"
+
+        start = m.start()
+        end = hits[idx + 1].start() if idx + 1 < len(hits) else len(text)
+        chunk = text[start:end].strip()
+
+        issues.append(Issue(level=sev, code=f"LLM_{sev}", message=chunk[:2000]))
+
     return issues

@@ -27,7 +27,6 @@ class Paths:
         cache_dir = root / "cache"
         threads_dir = root / "threads"
         reports_dir = root / "reports"
-
         return Paths(
             root=root,
             secrets_dir=secrets_dir,
@@ -37,6 +36,14 @@ class Paths:
             threads_dir=threads_dir,
             reports_dir=reports_dir,
         )
+
+    def thread_path(self, folder_id: str, thread_id: str) -> Path:
+        safe_folder = (folder_id or "").replace("/", "_")
+        safe_thread = (thread_id or "").replace("/", "_")
+        return self.threads_dir / safe_folder / f"{safe_thread}.json"
+
+    def meta_path(self, file_id: str) -> Path:
+        return self.cache_dir / f"{file_id}.meta.json"
 
 
 @dataclass
@@ -52,6 +59,11 @@ class AuditPolicy:
     download_workers: int = 4
     llm_workers: int = 1
 
+    # incremental speed-up
+    skip_unchanged: bool = True   # <-- big win for large folders after first scan
+    force_redownload: bool = False
+    force_recheck: bool = False   # re-run checks even if unchanged
+
     # basic checks
     min_pages: int = 1
     min_text_chars: int = 200
@@ -59,7 +71,7 @@ class AuditPolicy:
     # LLM
     llm_model: str = "gpt-4.1-mini"
 
-    # optional cost/speed controls for llm check (checks.py uses defaults if not present)
+    # cost/speed controls for llm check
     llm_max_chars: int = 120_000
     llm_chunk_chars: int = 20_000
     llm_chunk_overlap: int = 1_000
